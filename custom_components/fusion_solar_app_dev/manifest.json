@@ -1,6 +1,6 @@
 {
-  "domain": "fusion_solar_app",
-  "name": "Fusion Solar App Integration",
+  "domain": "fusion_solar_app_dev",
+  "name": "Fusion Solar App (Dev)",
   "codeowners": [
     "@hcraveiro"
   ],
