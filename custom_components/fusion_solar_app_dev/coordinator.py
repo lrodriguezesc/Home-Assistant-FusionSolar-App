@@ -66,6 +66,16 @@ class FusionSolarCoordinator(DataUpdateCoordinator):
         self.api = FusionSolarAPI(user=self.user, pwd=self.pwd, login_host=self.login_host, captcha_input=None)
         self.api.station = config_entry.data.get(CONF_STATION_DN)
 
+        # Restore authenticated session from config entry if available
+        dp_session = config_entry.data.get("dp_session")
+        data_host = config_entry.data.get("data_host")
+        if dp_session and data_host:
+            try:
+                self.api.restore_session(dp_session, data_host)
+                _LOGGER.info("Restored authenticated session from config entry")
+            except Exception as ex:
+                _LOGGER.warning("Failed to restore session, will login fresh: %s", ex)
+
     async def async_update_data(self):
         """Fetch data from API endpoint.
 

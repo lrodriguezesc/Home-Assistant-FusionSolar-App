@@ -314,6 +314,17 @@ class FusionSolarAPI:
         raise APIAuthError("Login failed.")
 
 
+    def restore_session(self, dp_session: str, data_host: str) -> None:
+        """Restore an authenticated session without requiring login."""
+        self.dp_session = dp_session
+        self.data_host = data_host
+        self.session.cookies.set("dp-session", dp_session)
+        self.session.cookies.set("locale", "en-us")
+        self.connected = True
+        self.last_session_time = datetime.now(timezone.utc)
+        self.refresh_csrf()
+        self._start_session_monitor()
+
     def reset_session(self):
         """Reset HTTP session, clearing all cookies."""
         self.session = requests.Session()
