@@ -127,12 +127,15 @@ class FusionSolarAPI:
 
         # Pre-warm session: visit login page to get session cookies.
         # This mimics browser behavior and may avoid the CAPTCHA requirement.
-        login_page_url = f"https://{self.login_host}{LOGIN_FORM_URL}"
-        _LOGGER.debug("Pre-warming session by visiting login page: %s", login_page_url)
-        try:
-            self.session.get(login_page_url, timeout=20)
-        except Exception as ex:
-            _LOGGER.warning("Failed to pre-warm session: %s", ex)
+        # Skip pre-warm when retrying with a captcha answer, as it would reset
+        # the server-side session that the CAPTCHA is bound to.
+        if not self.captcha_input:
+            login_page_url = f"https://{self.login_host}{LOGIN_FORM_URL}"
+            _LOGGER.debug("Pre-warming session by visiting login page: %s", login_page_url)
+            try:
+                self.session.get(login_page_url, timeout=20)
+            except Exception as ex:
+                _LOGGER.warning("Failed to pre-warm session: %s", ex)
 
         public_key_url = f"https://{self.login_host}{PUBKEY_URL}"
         _LOGGER.debug("Getting Public Key at: %s", public_key_url)
