@@ -141,6 +141,11 @@ class FusionSolarConfigFlow(ConfigFlow, domain=DOMAIN):
 
             data = {**self._input_data, CONF_STATION_DN: station_dn}
 
+            # Persist authenticated session so coordinator can restore it
+            if self._api and self._api.connected:
+                data["dp_session"] = self._api.dp_session
+                data["data_host"] = self._api.data_host
+
             title = next(
                 (
                     station.get("stationName", "Fusion Solar App Integration")
@@ -190,7 +195,7 @@ class FusionSolarConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.hass.async_add_executor_job(self._api.login)
                 if self._api.connected:
                     if self._is_reauth and self._reauth_entry:
-                        # Reauth flow: update existing config entry
+                        # Reauth flow: update existing config entry with session
                         self.hass.config_entries.async_update_entry(
                             self._reauth_entry,
                             data={
@@ -198,6 +203,8 @@ class FusionSolarConfigFlow(ConfigFlow, domain=DOMAIN):
                                 CONF_USERNAME: self._captcha_credentials[CONF_USERNAME],
                                 CONF_PASSWORD: self._captcha_credentials[CONF_PASSWORD],
                                 FUSION_SOLAR_HOST: self._captcha_credentials[FUSION_SOLAR_HOST],
+                                "dp_session": self._api.dp_session,
+                                "data_host": self._api.data_host,
                             },
                         )
                         await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
@@ -272,14 +279,18 @@ class FusionSolarConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
 
             if "base" not in errors:
+                update_data = {
+                    **self._reauth_entry.data,
+                    CONF_USERNAME: user_input[CONF_USERNAME],
+                    CONF_PASSWORD: user_input[CONF_PASSWORD],
+                    FUSION_SOLAR_HOST: user_input[FUSION_SOLAR_HOST],
+                }
+                if api and api.connected:
+                    update_data["dp_session"] = api.dp_session
+                    update_data["data_host"] = api.data_host
                 self.hass.config_entries.async_update_entry(
                     self._reauth_entry,
-                    data={
-                        **self._reauth_entry.data,
-                        CONF_USERNAME: user_input[CONF_USERNAME],
-                        CONF_PASSWORD: user_input[CONF_PASSWORD],
-                        FUSION_SOLAR_HOST: user_input[FUSION_SOLAR_HOST],
-                    },
+                    data=update_data,
                 )
                 await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
                 return self.async_abort(reason="reauth_successful")
