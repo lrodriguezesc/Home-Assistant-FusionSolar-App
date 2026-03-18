@@ -12,7 +12,7 @@ from typing import Dict, Optional
 from urllib.parse import unquote, quote, urlparse, urlencode
 from datetime import datetime, timedelta, timezone
 from dateutil.relativedelta import relativedelta
-from .const import DOMAIN, PUBKEY_URL, LOGIN_HEADERS_1_STEP_REFERER, LOGIN_HEADERS_2_STEP_REFERER, LOGIN_VALIDATE_USER_URL, LOGIN_FORM_URL, DATA_URL, STATION_LIST_URL, KEEP_ALIVE_URL, DATA_REFERER_URL, ENERGY_BALANCE_URL, LOGIN_DEFAULT_REDIRECT_URL, CAPTCHA_URL
+from .const import DOMAIN, PUBKEY_URL, LOGIN_HEADERS_1_STEP_REFERER, LOGIN_HEADERS_2_STEP_REFERER, LOGIN_VALIDATE_USER_URL, LOGIN_VALIDATE_USER_URL_LA5, FINAL_AUTH_URL_LA5, LOGIN_FORM_URL, DATA_URL, STATION_LIST_URL, KEEP_ALIVE_URL, DATA_REFERER_URL, ENERGY_BALANCE_URL, LOGIN_DEFAULT_REDIRECT_URL, CAPTCHA_URL
 from .utils import extract_numeric, encrypt_password, generate_nonce
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,8 +121,17 @@ class FusionSolarAPI:
         """Return the name of the controller."""
         return DOMAIN
 
-
     def login(self) -> bool:
+        """Connect to api."""
+    
+        if "la5" in self.login_host:
+            _LOGGER.debug("Using LA5 login flow")
+            return self._login_la5()
+        else:
+            _LOGGER.debug("Using EU5 login flow")
+            return self._login_eu5()
+            
+    def _login_eu5(self) -> bool:
         """Connect to api."""
 
         # Pre-warm session: visit login page to get session cookies.
@@ -313,6 +322,111 @@ class FusionSolarAPI:
         self.connected = False
         raise APIAuthError("Login failed.")
 
+    def _login_la5(self) -> bool:
+        """Login flow for la5 (SSO without pubkey)."""
+    
+        try:
+            # Step 1: pre-warm session (important for cookies)
+            base_url = f"https://{self.login_host}"
+            self.session.get(f"{base_url}/", timeout=20)
+    
+            login_url = (
+                f"{base_url}{LOGIN_VALIDATE_USER_URL_LA5}"
+                "?service=%2Frest%2Fdp%2Fuidm%2Fauth%2Fv1%2Fon-sso-credential-ready"
+            )
+    
+            payload = {
+                "username": self.user,
+                "password": self.pwd,
+                "organizationName": "",
+            }
+    
+            headers = {
+                "Content-Type": "application/json;charset=UTF-8",
+                "Accept": "application/json, text/plain, */*",
+                "Origin": base_url,
+                "Referer": base_url,
+                "X-Requested-With": "XMLHttpRequest",
+            }
+    
+            _LOGGER.debug("LA5 Login Request to: %s", login_url)
+    
+            response = self.session.post(
+                login_url,
+                json=payload,
+                headers=headers,
+                timeout=20,
+            )
+    
+            _LOGGER.debug(
+                "LA5 Login Response Headers: %s\r\nResponse: %s",
+                response.headers,
+                response.text,
+            )
+    
+            if response.status_code != 200:
+                raise APIAuthError(f"LA5 login failed: {response.status_code}")
+    
+            redirect_url = response.headers.get("redirect_url")
+    
+            if not redirect_url:
+                raise APIAuthError("LA5 login missing redirect_url")
+    
+            # Step 2: follow SSO redirect (ticket)
+            sso_url = f"{base_url}{redirect_url}"
+            _LOGGER.debug("LA5 SSO redirect: %s", sso_url)
+    
+            self.session.get(sso_url, timeout=20, allow_redirects=False)
+    
+            # Step 3: final redirect (sets dp-session)
+            final_url = f"{base_url}{FINAL_AUTH_URL_LA5}"
+            _LOGGER.debug("LA5 final redirect: %s", final_url)
+    
+            final_response = self.session.get(final_url, timeout=20, allow_redirects=False)
+    
+            _LOGGER.debug(
+                "LA5 Final Response Headers: %s",
+                final_response.headers,
+            )
+    
+            # Extract dp-session cookie
+            dp_session = self.session.cookies.get("dp-session")
+    
+            if not dp_session:
+                _LOGGER.error("LA5 DP Session not found in cookies.")
+                raise APIAuthError("LA5 DP Session not found")
+    
+            self.dp_session = dp_session
+            self.connected = True
+            self.last_session_time = datetime.now(timezone.utc)
+    
+            # Detect data_host (important!)
+            self.data_host = self.login_host
+    
+            _LOGGER.debug("LA5 Login successful. DP Session: %s", dp_session)
+    
+            # Continue normal flow
+            self.refresh_csrf()
+    
+            station_data = self.get_station_list()
+    
+            if not self.station:
+                self.station = station_data["data"]["list"][0]["dn"]
+            else:
+                if not any(s["dn"] == self.station for s in station_data["data"]["list"]):
+                    raise APIDataStructureError(f"Station {self.station} not found.")
+    
+            if self.battery_capacity is None or self.battery_capacity == 0.0:
+                self.battery_capacity = station_data["data"]["list"][0]["batteryCapacity"]
+    
+            self._start_session_monitor()
+    
+            return True, self.station
+    
+        except Exception as ex:
+            _LOGGER.error("LA5 login failed: %s", ex)
+            self.connected = False
+            raise
 
     def restore_session(self, dp_session: str, data_host: str) -> None:
         """Restore an authenticated session without requiring login.
